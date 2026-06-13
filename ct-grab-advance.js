@@ -580,7 +580,7 @@ ZTN1
         align-items: center;
         justify-content: center;
         padding: 24px;
-        background: rgba(17, 24, 39, 0.52);
+        background: rgba(17, 24, 39, 0.79);
         font-family: Arial, sans-serif;
         color: #111827;
       }
