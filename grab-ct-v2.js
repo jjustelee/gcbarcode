@@ -705,10 +705,22 @@ ZTN1
         opacity: 0.9;
         filter: invert(1) brightness(1.4);
       }
+      #${PANEL_ID} input.ct-date-picker-native {
+        position: absolute;
+        right: 6px;
+        top: 50%;
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 0;
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(-50%);
+      }
       #${PANEL_ID} .ct-date-wrap {
         position: relative;
       }
-      #${PANEL_ID} .ct-date-wrap input[type="date"] {
+      #${PANEL_ID} .ct-date-wrap input[type="text"] {
         padding-right: 38px;
       }
       #${PANEL_ID} .ct-date-button {
@@ -1043,14 +1055,16 @@ ZTN1
             <div>
               <label for="ct-start-date-input">시작일</label>
               <div class="ct-date-wrap">
-                <input id="ct-start-date-input" type="date">
+                <input id="ct-start-date-input" type="text" inputmode="numeric" autocomplete="off" placeholder="YYYYMMDD">
+                <input id="ct-start-date-picker" class="ct-date-picker-native" type="date" tabindex="-1" aria-hidden="true">
                 <button type="button" class="ct-date-button" data-date-picker="start" title="시작일 선택" aria-label="시작일 선택"></button>
               </div>
             </div>
             <div>
               <label for="ct-end-date-input">종료일</label>
               <div class="ct-date-wrap">
-                <input id="ct-end-date-input" type="date">
+                <input id="ct-end-date-input" type="text" inputmode="numeric" autocomplete="off" placeholder="YYYYMMDD">
+                <input id="ct-end-date-picker" class="ct-date-picker-native" type="date" tabindex="-1" aria-hidden="true">
                 <button type="button" class="ct-date-button" data-date-picker="end" title="종료일 선택" aria-label="종료일 선택"></button>
               </div>
             </div>
@@ -1092,6 +1106,8 @@ ZTN1
     const toCenterInput = panel.querySelector('#ct-to-center-input');
     const startDateInput = panel.querySelector('#ct-start-date-input');
     const endDateInput = panel.querySelector('#ct-end-date-input');
+    const startDatePicker = panel.querySelector('#ct-start-date-picker');
+    const endDatePicker = panel.querySelector('#ct-end-date-picker');
     const startDateButton = panel.querySelector('[data-date-picker="start"]');
     const endDateButton = panel.querySelector('[data-date-picker="end"]');
     const autoDownloadInput = panel.querySelector('#ct-auto-download-input');
@@ -1123,6 +1139,8 @@ ZTN1
     toCenterInput.value = settings.toCenterCode || DEFAULT_TO_CENTER_CODE;
     startDateInput.value = initialRange.startDate;
     endDateInput.value = initialRange.endDate;
+    startDatePicker.value = initialRange.startDate;
+    endDatePicker.value = initialRange.endDate;
     autoDownloadInput.checked = settings.autoDownloadCsv !== false;
 
     const setStatusTone = (tone = '') => {
@@ -1248,64 +1266,76 @@ ZTN1
         const range = getQuickDateRange(selectedQuickRange);
         startDateInput.value = range.startDate;
         endDateInput.value = range.endDate;
+        startDatePicker.value = range.startDate;
+        endDatePicker.value = range.endDate;
         refreshSelections();
       });
     });
 
-    [startDateInput, endDateInput].forEach(input => {
-      input.addEventListener('beforeinput', (event) => {
-        if (event.inputType !== 'insertText') return;
+    const syncDateTextInput = (textInput, pickerInput) => {
+      const normalized = normalizeDateInputValue(textInput.value);
 
-        const nextRawValue =
-          input.value.slice(0, input.selectionStart || 0) +
-          event.data +
-          input.value.slice(input.selectionEnd || 0);
-        const normalized = normalizeDateInputValue(nextRawValue);
+      if (normalized) {
+        textInput.value = normalized;
+        pickerInput.value = normalized;
+      }
+
+      selectedQuickRange = '';
+      refreshSelections();
+    };
+
+    [
+      { textInput: startDateInput, pickerInput: startDatePicker },
+      { textInput: endDateInput, pickerInput: endDatePicker }
+    ].forEach(({ textInput, pickerInput }) => {
+      textInput.addEventListener('input', () => {
+        const normalized = normalizeDateInputValue(textInput.value);
 
         if (!normalized) return;
 
-        event.preventDefault();
-        input.value = normalized;
+        textInput.value = normalized;
+        pickerInput.value = normalized;
         selectedQuickRange = '';
         refreshSelections();
       });
 
-      input.addEventListener('paste', (event) => {
+      textInput.addEventListener('paste', (event) => {
         const pastedText = event.clipboardData?.getData('text') || '';
         const normalized = normalizeDateInputValue(pastedText);
 
         if (!normalized) return;
 
         event.preventDefault();
-        input.value = normalized;
+        textInput.value = normalized;
+        pickerInput.value = normalized;
         selectedQuickRange = '';
         refreshSelections();
       });
 
-      input.addEventListener('change', () => {
-        const normalized = normalizeDateInputValue(input.value);
+      textInput.addEventListener('blur', () => {
+        syncDateTextInput(textInput, pickerInput);
+      });
 
-        if (normalized) {
-          input.value = normalized;
-        }
-
+      pickerInput.addEventListener('change', () => {
+        textInput.value = pickerInput.value;
         selectedQuickRange = '';
         refreshSelections();
       });
     });
 
-    const openDatePicker = (input) => {
-      input.focus();
+    const openDatePicker = (textInput, pickerInput) => {
+      pickerInput.value = normalizeDateInputValue(textInput.value) || pickerInput.value;
+      textInput.focus();
 
-      if (typeof input.showPicker === 'function') {
-        input.showPicker();
+      if (typeof pickerInput.showPicker === 'function') {
+        pickerInput.showPicker();
       } else {
-        input.click();
+        pickerInput.click();
       }
     };
 
-    startDateButton.addEventListener('click', () => openDatePicker(startDateInput));
-    endDateButton.addEventListener('click', () => openDatePicker(endDateInput));
+    startDateButton.addEventListener('click', () => openDatePicker(startDateInput, startDatePicker));
+    endDateButton.addEventListener('click', () => openDatePicker(endDateInput, endDatePicker));
 
     const getOptions = () => {
       const targetContainer = clean(containerInput.value);
@@ -1319,8 +1349,8 @@ ZTN1
         toCenterCode,
         searchDateType: selectedSearchDateType,
         selectedStatuses: sanitizeStatuses(selectedStatuses),
-        startDate: startDateInput.value,
-        endDate: endDateInput.value,
+        startDate: normalizeDateInputValue(startDateInput.value) || startDateInput.value,
+        endDate: normalizeDateInputValue(endDateInput.value) || endDateInput.value,
         quickRange: selectedQuickRange,
         autoDownloadCsv: autoDownloadInput.checked
       };
@@ -1440,6 +1470,12 @@ ZTN1
         if (!options.startDate) startDateInput.classList.add('ct-input-error');
         if (!options.endDate) endDateInput.classList.add('ct-input-error');
         return '시작일과 종료일을 입력하세요.';
+      }
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(options.startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(options.endDate)) {
+        startDateInput.classList.add('ct-input-error');
+        endDateInput.classList.add('ct-input-error');
+        return '날짜는 20260615 또는 2026-06-15 형식으로 입력하세요.';
       }
 
       if (options.startDate > options.endDate) {
