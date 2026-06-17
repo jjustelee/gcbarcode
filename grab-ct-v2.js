@@ -684,6 +684,47 @@ ZTN1
         opacity: 0.9;
         filter: invert(1) brightness(1.4);
       }
+      #${PANEL_ID} .ct-date-wrap {
+        position: relative;
+      }
+      #${PANEL_ID} .ct-date-wrap input[type="date"] {
+        padding-right: 38px;
+      }
+      #${PANEL_ID} .ct-date-button {
+        position: absolute;
+        right: 6px;
+        top: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        border: 0;
+        border-radius: 5px;
+        background: #1f2937;
+        color: #e5e7eb;
+        cursor: pointer;
+        transform: translateY(-50%);
+      }
+      #${PANEL_ID} .ct-date-button::before {
+        content: "";
+        width: 13px;
+        height: 13px;
+        border: 1.5px solid currentColor;
+        border-radius: 2px;
+        box-shadow: inset 0 4px 0 rgba(229, 231, 235, 0.22);
+      }
+      #${PANEL_ID} .ct-date-button::after {
+        content: "";
+        position: absolute;
+        top: 7px;
+        width: 10px;
+        height: 1.5px;
+        background: currentColor;
+      }
+      #${PANEL_ID} .ct-date-button:hover {
+        background: #374151;
+      }
       #${PANEL_ID} input:focus {
         border-color: #16a34a;
         box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.14);
@@ -980,11 +1021,17 @@ ZTN1
           <div class="ct-grid-2">
             <div>
               <label for="ct-start-date-input">시작일</label>
-              <input id="ct-start-date-input" type="date">
+              <div class="ct-date-wrap">
+                <input id="ct-start-date-input" type="date">
+                <button type="button" class="ct-date-button" data-date-picker="start" title="시작일 선택" aria-label="시작일 선택"></button>
+              </div>
             </div>
             <div>
               <label for="ct-end-date-input">종료일</label>
-              <input id="ct-end-date-input" type="date">
+              <div class="ct-date-wrap">
+                <input id="ct-end-date-input" type="date">
+                <button type="button" class="ct-date-button" data-date-picker="end" title="종료일 선택" aria-label="종료일 선택"></button>
+              </div>
             </div>
           </div>
 
@@ -1024,6 +1071,8 @@ ZTN1
     const toCenterInput = panel.querySelector('#ct-to-center-input');
     const startDateInput = panel.querySelector('#ct-start-date-input');
     const endDateInput = panel.querySelector('#ct-end-date-input');
+    const startDateButton = panel.querySelector('[data-date-picker="start"]');
+    const endDateButton = panel.querySelector('[data-date-picker="end"]');
     const autoDownloadInput = panel.querySelector('#ct-auto-download-input');
     const startButton = panel.querySelector('[data-action="start"]');
     const stopButton = panel.querySelector('[data-action="stop"]');
@@ -1188,6 +1237,19 @@ ZTN1
         refreshSelections();
       });
     });
+
+    const openDatePicker = (input) => {
+      input.focus();
+
+      if (typeof input.showPicker === 'function') {
+        input.showPicker();
+      } else {
+        input.click();
+      }
+    };
+
+    startDateButton.addEventListener('click', () => openDatePicker(startDateInput));
+    endDateButton.addEventListener('click', () => openDatePicker(endDateInput));
 
     const getOptions = () => {
       const targetContainer = clean(containerInput.value);
