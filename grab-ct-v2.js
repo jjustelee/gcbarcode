@@ -494,6 +494,33 @@ ZTN1
 
   const isSessionExpired = (error) => error?.message === 'SESSION_EXPIRED';
 
+  const getFriendlyErrorMessage = (error) => {
+    const message = error?.message || String(error);
+    const status = error?.status || message.match(/FETCH_FAILED_(\d+)/)?.[1];
+
+    if (message === 'CT_REQUIRED') {
+      return 'CT 바코드를 입력한 뒤 다시 조회하세요.';
+    }
+
+    if (status === 401 || status === '401' || status === 403 || status === '403') {
+      return 'WMS 권한 또는 로그인 상태를 확인한 뒤 다시 조회하세요.';
+    }
+
+    if (status === 404 || status === '404') {
+      return 'WMS 조회 페이지에 연결하지 못했습니다. 현재 WMS 화면 또는 접속 주소를 확인한 뒤 다시 실행하세요.';
+    }
+
+    if (status === 502 || status === '502' || status === 503 || status === '503' || status === 504 || status === '504') {
+      return 'WMS 응답이 지연되고 있습니다. 잠시 후 다시 조회하세요.';
+    }
+
+    if (error instanceof TypeError) {
+      return 'WMS에 연결할 수 없습니다. 내부망, VPN, 로그인 상태를 확인한 뒤 다시 조회하세요.';
+    }
+
+    return '조회 중 문제가 발생했습니다. WMS 로그인 상태와 조회 조건을 확인한 뒤 다시 시도하세요.';
+  };
+
   const sleep = (ms, signal) => new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(createAbortError());
@@ -650,6 +677,12 @@ ZTN1
         color: #ffffff;
         outline: none;
         font-size: 13px;
+        color-scheme: dark;
+      }
+      #${PANEL_ID} input[type="date"]::-webkit-calendar-picker-indicator {
+        cursor: pointer;
+        opacity: 0.9;
+        filter: invert(1) brightness(1.4);
       }
       #${PANEL_ID} input:focus {
         border-color: #16a34a;
@@ -2041,7 +2074,7 @@ ZTN1
         progress.stopped(`중지됨: 성공 ${successCount}건, 실패 ${failureCount}건`);
       } else {
         console.error('[ERROR]', error);
-        progress.error(`조회 실패. Console을 확인하세요. ${error.message || error}`);
+        progress.error(getFriendlyErrorMessage(error));
       }
 
       progress.setDownloadEnabled(latestFlatRows.length > 0);
