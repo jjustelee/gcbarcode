@@ -542,6 +542,27 @@ ZTN1
     return `${yyyy}-${mm}-${dd}`;
   };
 
+  const normalizeDateInputValue = (value) => {
+    const digits = String(value || '').replace(/\D/g, '');
+
+    if (digits.length !== 8) return '';
+
+    const yyyy = digits.slice(0, 4);
+    const mm = digits.slice(4, 6);
+    const dd = digits.slice(6, 8);
+    const date = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+
+    if (
+      date.getFullYear() !== Number(yyyy) ||
+      date.getMonth() + 1 !== Number(mm) ||
+      date.getDate() !== Number(dd)
+    ) {
+      return '';
+    }
+
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
   const addDays = (date, days) => {
     const next = new Date(date);
     next.setDate(next.getDate() + days);
@@ -977,11 +998,11 @@ ZTN1
           <div class="ct-advanced" data-role="advanced" hidden>
           <div class="ct-grid-2">
             <div>
-              <label for="ct-from-center-input">보내는 센터</label>
+              <label for="ct-from-center-input">보내는 센터 (직접 입력 가능)</label>
               <input id="ct-from-center-input" type="text" list="ct-center-list" autocomplete="off" placeholder="전체">
             </div>
             <div>
-              <label for="ct-to-center-input">받는 센터</label>
+              <label for="ct-to-center-input">받는 센터 (직접 입력 가능)</label>
               <input id="ct-to-center-input" type="text" list="ct-center-list" autocomplete="off" placeholder="${DEFAULT_TO_CENTER_CODE}">
             </div>
           </div>
@@ -1232,7 +1253,42 @@ ZTN1
     });
 
     [startDateInput, endDateInput].forEach(input => {
+      input.addEventListener('beforeinput', (event) => {
+        if (event.inputType !== 'insertText') return;
+
+        const nextRawValue =
+          input.value.slice(0, input.selectionStart || 0) +
+          event.data +
+          input.value.slice(input.selectionEnd || 0);
+        const normalized = normalizeDateInputValue(nextRawValue);
+
+        if (!normalized) return;
+
+        event.preventDefault();
+        input.value = normalized;
+        selectedQuickRange = '';
+        refreshSelections();
+      });
+
+      input.addEventListener('paste', (event) => {
+        const pastedText = event.clipboardData?.getData('text') || '';
+        const normalized = normalizeDateInputValue(pastedText);
+
+        if (!normalized) return;
+
+        event.preventDefault();
+        input.value = normalized;
+        selectedQuickRange = '';
+        refreshSelections();
+      });
+
       input.addEventListener('change', () => {
+        const normalized = normalizeDateInputValue(input.value);
+
+        if (normalized) {
+          input.value = normalized;
+        }
+
         selectedQuickRange = '';
         refreshSelections();
       });
