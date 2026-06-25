@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "GC Barcode Helper",
+  "description": "Runs the GC barcode helper on approved WMS pages.",
+  "version": "1.0.0",
+  "action": {
+    "default_title": "GC Barcode Helper"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://inventory.coupang.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
