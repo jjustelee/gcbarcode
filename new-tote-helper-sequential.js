@@ -15,6 +15,7 @@
 
     wms: {
       baseUrl: "https://inventory.coupang.com/async/inventory/search",
+      locationType: "REAL_CART",
       gcPrefix: "GC",
       page: "0",
       pageSize: "20",
@@ -530,7 +531,7 @@
     return (
       CONFIG.wms.baseUrl +
       "?searched=true" +
-      "&locationType=" +
+      "&locationType=" + encodeURIComponent(CONFIG.wms.locationType) +
       "&zone=" +
       "&fromLocation=" +
       "&toLocation=" +
