@@ -1,10 +1,10 @@
 (async () => {
   'use strict';
 
-  const APP_VERSION = 'v0.1';
+  const APP_VERSION = 'v0.2';
   const APP_TITLE = `LOAD Vehicle Summary · Jace ${APP_VERSION}`;
   const DEFAULT_TO_CENTER_CODE = 'DON1CFC';
-  const DEFAULT_RANGE_DAYS = 3;
+  const DEFAULT_RANGE_DAYS = 1;
   const STATUS_LOAD = 'LOAD';
   const SEARCH_DATE_TYPE = 'UPLOAD_COMPLETED_DATE';
   const PAGE_SIZE = 20;
@@ -13,6 +13,7 @@
   const PANEL_ID = 'grab-load-vehicle-panel';
   const STYLE_ID = 'grab-load-vehicle-style';
   const RUN_KEY = '__grabLoadVehicleRunId';
+  const ABORT_KEY = '__grabLoadVehicleAbortController';
 
   const QUICK_RANGES = [
     { value: '1', label: '오늘', days: 1 },
@@ -27,7 +28,27 @@
       .replace(/\s+/g, ' ')
       .trim();
 
-  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  const createAbortError = () => {
+    const error = new Error('조회가 중지되었습니다.');
+    error.name = 'AbortError';
+    return error;
+  };
+
+  const isAbortError = (error) => error?.name === 'AbortError';
+
+  const sleep = (ms, signal) => new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createAbortError());
+      return;
+    }
+
+    const timerId = setTimeout(resolve, ms);
+
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timerId);
+      reject(createAbortError());
+    }, { once: true });
+  });
 
   const formatDate = (date) => {
     const yyyy = date.getFullYear();
@@ -56,6 +77,7 @@
   };
 
   const removeExistingPanel = () => {
+    window[ABORT_KEY]?.abort();
     document.getElementById(PANEL_ID)?.remove();
     document.getElementById(STYLE_ID)?.remove();
   };
@@ -242,6 +264,7 @@
       </div>
       <div class="glv-actions">
         <button type="button" class="glv-primary" id="glv-search">조회</button>
+        <button type="button" class="glv-secondary" id="glv-stop" disabled>중지</button>
         <button type="button" class="glv-secondary" id="glv-copy-group" disabled>그룹 복사</button>
         <button type="button" class="glv-secondary" id="glv-copy-excel" disabled>엑셀용 복사</button>
       </div>
@@ -257,6 +280,7 @@
       toCenterInput: panel.querySelector('#glv-to-center'),
       rangeSelect: panel.querySelector('#glv-range'),
       searchButton: panel.querySelector('#glv-search'),
+      stopButton: panel.querySelector('#glv-stop'),
       copyGroupButton: panel.querySelector('#glv-copy-group'),
       copyExcelButton: panel.querySelector('#glv-copy-excel'),
       status: panel.querySelector('#glv-status'),
@@ -272,6 +296,7 @@
 
   const setBusy = (ui, isBusy) => {
     ui.searchButton.disabled = isBusy;
+    ui.stopButton.disabled = !isBusy;
     ui.searchButton.textContent = isBusy ? '조회 중...' : '조회';
   };
 
@@ -298,13 +323,14 @@
     return url.href;
   };
 
-  const fetchHtml = async (url) => {
-    await sleep(REQUEST_GAP_MS);
+  const fetchHtml = async (url, signal) => {
+    await sleep(REQUEST_GAP_MS, signal);
 
     const response = await fetch(url, {
       method: 'GET',
       credentials: 'include',
       cache: 'no-store',
+      signal,
       headers: {
         Accept: 'text/html, */*'
       }
@@ -384,13 +410,13 @@
 
   const makeRowKey = (row) => JSON.stringify(row);
 
-  const collectRows = async ({ ui, runId, toCenterCode, startDate, endDate }) => {
+  const collectRows = async ({ ui, runId, toCenterCode, startDate, endDate, signal }) => {
     const rows = [];
     const seenPages = new Set();
 
     for (let pageNo = 0; pageNo < MAX_PAGE; pageNo++) {
-      if (window[RUN_KEY] !== runId) {
-        throw new Error('새 조회가 시작되어 이전 조회를 중지했습니다.');
+      if (signal.aborted || window[RUN_KEY] !== runId) {
+        throw createAbortError();
       }
 
       setStatus(ui, `목록 조회 중 · page ${pageNo + 1}`);
@@ -398,7 +424,7 @@
       const url = buildListUrl({ pageNo, toCenterCode, startDate, endDate });
       console.log(`[${APP_TITLE}] page=${pageNo}`, url);
 
-      const html = await fetchHtml(url);
+      const html = await fetchHtml(url, signal);
       const pageRows = parseListRows(html);
 
       if (!pageRows.length) break;
@@ -496,6 +522,10 @@
   };
 
   const getFriendlyErrorMessage = (error) => {
+    if (isAbortError(error)) {
+      return '조회가 중지되었습니다.';
+    }
+
     const message = error?.message || String(error);
 
     if (message.includes('Failed to fetch') || message.includes('NetworkError')) {
@@ -509,6 +539,13 @@
   let latestGroups = [];
 
   ui.closeButton.addEventListener('click', removeExistingPanel);
+
+  ui.stopButton.addEventListener('click', () => {
+    window[RUN_KEY] = '';
+    window[ABORT_KEY]?.abort();
+    setStatus(ui, '조회가 중지되었습니다.');
+    setBusy(ui, false);
+  });
 
   ui.copyGroupButton.addEventListener('click', async () => {
     await copyText(buildGroupText(latestGroups));
@@ -531,7 +568,11 @@
     }
 
     const runId = `${Date.now()}-${Math.random()}`;
+    const abortController = new AbortController();
+
+    window[ABORT_KEY]?.abort();
     window[RUN_KEY] = runId;
+    window[ABORT_KEY] = abortController;
 
     latestGroups = [];
     ui.summary.textContent = '';
@@ -545,7 +586,14 @@
 
       setStatus(ui, `이동중 목록 조회 중 · ${toCenterCode} · ${startDate} ~ ${endDate}`);
 
-      const rows = await collectRows({ ui, runId, toCenterCode, startDate, endDate });
+      const rows = await collectRows({
+        ui,
+        runId,
+        toCenterCode,
+        startDate,
+        endDate,
+        signal: abortController.signal
+      });
       latestGroups = groupRows(rows);
 
       window.grabLoadVehicleVersion = APP_VERSION;
@@ -555,10 +603,15 @@
       renderGroups(ui, latestGroups, rows.length);
       setStatus(ui, latestGroups.length ? '조회 완료' : '조회 완료 · 표시할 차량 정보가 없습니다.');
     } catch (error) {
-      console.error(`[${APP_TITLE}]`, error);
+      if (!isAbortError(error)) {
+        console.error(`[${APP_TITLE}]`, error);
+      }
       setStatus(ui, getFriendlyErrorMessage(error));
     } finally {
-      setBusy(ui, false);
+      if (window[RUN_KEY] === runId) {
+        window[ABORT_KEY] = null;
+        setBusy(ui, false);
+      }
     }
   });
 })();
