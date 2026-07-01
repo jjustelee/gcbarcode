@@ -1,0 +1,617 @@
+(async () => {
+  'use strict';
+
+  const APP_VERSION = 'v0.2';
+  const APP_TITLE = `LOAD Vehicle Summary · Jace ${APP_VERSION}`;
+  const DEFAULT_TO_CENTER_CODE = 'DON1CFC';
+  const DEFAULT_RANGE_DAYS = 1;
+  const STATUS_LOAD = 'LOAD';
+  const SEARCH_DATE_TYPE = 'UPLOAD_COMPLETED_DATE';
+  const PAGE_SIZE = 20;
+  const MAX_PAGE = 200;
+  const REQUEST_GAP_MS = 180;
+  const PANEL_ID = 'grab-load-vehicle-panel';
+  const STYLE_ID = 'grab-load-vehicle-style';
+  const RUN_KEY = '__grabLoadVehicleRunId';
+  const ABORT_KEY = '__grabLoadVehicleAbortController';
+
+  const QUICK_RANGES = [
+    { value: '1', label: '오늘', days: 1 },
+    { value: '3', label: '3일', days: 3 },
+    { value: '7', label: '7일', days: 7 }
+  ];
+
+  const TO_CENTER_OPTIONS = ['DON1CFC', 'DON1'];
+
+  const clean = (text) =>
+    (text || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const createAbortError = () => {
+    const error = new Error('조회가 중지되었습니다.');
+    error.name = 'AbortError';
+    return error;
+  };
+
+  const isAbortError = (error) => error?.name === 'AbortError';
+
+  const sleep = (ms, signal) => new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createAbortError());
+      return;
+    }
+
+    const timerId = setTimeout(resolve, ms);
+
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timerId);
+      reject(createAbortError());
+    }, { once: true });
+  });
+
+  const formatDate = (date) => {
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  const escapeHtml = (value) =>
+    String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+  const getDateRange = (days) => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - Math.max(days - 1, 0));
+
+    return {
+      startDate: formatDate(start),
+      endDate: formatDate(end)
+    };
+  };
+
+  const removeExistingPanel = () => {
+    window[ABORT_KEY]?.abort();
+    document.getElementById(PANEL_ID)?.remove();
+    document.getElementById(STYLE_ID)?.remove();
+  };
+
+  const injectStyle = () => {
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+      #${PANEL_ID} {
+        position: fixed;
+        right: 24px;
+        bottom: 24px;
+        z-index: 999999;
+        width: 420px;
+        max-height: calc(100vh - 48px);
+        box-sizing: border-box;
+        padding: 16px;
+        overflow: auto;
+        background: #111827;
+        color: #f9fafb;
+        border: 1px solid #374151;
+        border-radius: 10px;
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.38);
+        font-family: Arial, sans-serif;
+        font-size: 13px;
+      }
+      #${PANEL_ID} * {
+        box-sizing: border-box;
+      }
+      #${PANEL_ID} .glv-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      #${PANEL_ID} .glv-title {
+        font-weight: 700;
+        font-size: 15px;
+      }
+      #${PANEL_ID} .glv-close {
+        width: 28px;
+        height: 28px;
+        border: 1px solid #4b5563;
+        border-radius: 6px;
+        background: #1f2937;
+        color: #f9fafb;
+        cursor: pointer;
+      }
+      #${PANEL_ID} .glv-row {
+        display: grid;
+        grid-template-columns: 1fr 110px;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      #${PANEL_ID} label {
+        display: block;
+        margin-bottom: 5px;
+        color: #d1d5db;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      #${PANEL_ID} input,
+      #${PANEL_ID} select {
+        width: 100%;
+        height: 36px;
+        border: 1px solid #4b5563;
+        border-radius: 7px;
+        padding: 0 10px;
+        background: #030712;
+        color: #f9fafb;
+        font: inherit;
+      }
+      #${PANEL_ID} .glv-actions {
+        display: flex;
+        gap: 8px;
+        margin: 12px 0;
+      }
+      #${PANEL_ID} button {
+        height: 34px;
+        border: 0;
+        border-radius: 7px;
+        padding: 0 12px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      #${PANEL_ID} button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      #${PANEL_ID} .glv-primary {
+        background: #2563eb;
+        color: #ffffff;
+      }
+      #${PANEL_ID} .glv-secondary {
+        background: #374151;
+        color: #f9fafb;
+      }
+      #${PANEL_ID} .glv-status {
+        min-height: 28px;
+        margin: 8px 0;
+        padding: 8px 10px;
+        border-radius: 7px;
+        background: #1f2937;
+        color: #e5e7eb;
+        line-height: 1.35;
+      }
+      #${PANEL_ID} .glv-summary {
+        margin: 10px 0;
+        color: #d1d5db;
+      }
+      #${PANEL_ID} .glv-group {
+        margin-top: 10px;
+        padding: 10px;
+        border: 1px solid #374151;
+        border-radius: 8px;
+        background: #0b1220;
+      }
+      #${PANEL_ID} .glv-group-head {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 8px;
+        font-weight: 700;
+      }
+      #${PANEL_ID} .glv-count {
+        color: #93c5fd;
+      }
+      #${PANEL_ID} .glv-vehicles {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      #${PANEL_ID} .glv-vehicle {
+        min-width: 48px;
+        padding: 5px 7px;
+        border-radius: 6px;
+        background: #1f2937;
+        color: #f9fafb;
+        text-align: center;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+      #${PANEL_ID} .glv-empty {
+        padding: 18px 10px;
+        border: 1px dashed #4b5563;
+        border-radius: 8px;
+        color: #9ca3af;
+        text-align: center;
+      }
+    `;
+
+    document.head.appendChild(style);
+  };
+
+  const createPanel = () => {
+    removeExistingPanel();
+    injectStyle();
+
+    const panel = document.createElement('div');
+    panel.id = PANEL_ID;
+    panel.innerHTML = `
+      <div class="glv-head">
+        <div class="glv-title">${escapeHtml(APP_TITLE)}</div>
+        <button type="button" class="glv-close" title="닫기">×</button>
+      </div>
+      <div class="glv-row">
+        <div>
+          <label for="glv-to-center">받는센터</label>
+          <input id="glv-to-center" list="glv-to-center-list" value="${DEFAULT_TO_CENTER_CODE}" autocomplete="off" />
+          <datalist id="glv-to-center-list">
+            ${TO_CENTER_OPTIONS.map(code => `<option value="${escapeHtml(code)}"></option>`).join('')}
+          </datalist>
+        </div>
+        <div>
+          <label for="glv-range">기간</label>
+          <select id="glv-range">
+            ${QUICK_RANGES.map(option => `
+              <option value="${option.value}" ${option.days === DEFAULT_RANGE_DAYS ? 'selected' : ''}>
+                ${escapeHtml(option.label)}
+              </option>
+            `).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="glv-actions">
+        <button type="button" class="glv-primary" id="glv-search">조회</button>
+        <button type="button" class="glv-secondary" id="glv-stop" disabled>중지</button>
+        <button type="button" class="glv-secondary" id="glv-copy-group" disabled>그룹 복사</button>
+        <button type="button" class="glv-secondary" id="glv-copy-excel" disabled>엑셀용 복사</button>
+      </div>
+      <div class="glv-status" id="glv-status">받는센터 선택 후 조회하세요.</div>
+      <div class="glv-summary" id="glv-summary"></div>
+      <div id="glv-result"></div>
+    `;
+
+    document.body.appendChild(panel);
+
+    return {
+      panel,
+      toCenterInput: panel.querySelector('#glv-to-center'),
+      rangeSelect: panel.querySelector('#glv-range'),
+      searchButton: panel.querySelector('#glv-search'),
+      stopButton: panel.querySelector('#glv-stop'),
+      copyGroupButton: panel.querySelector('#glv-copy-group'),
+      copyExcelButton: panel.querySelector('#glv-copy-excel'),
+      status: panel.querySelector('#glv-status'),
+      summary: panel.querySelector('#glv-summary'),
+      result: panel.querySelector('#glv-result'),
+      closeButton: panel.querySelector('.glv-close')
+    };
+  };
+
+  const setStatus = (ui, message) => {
+    ui.status.textContent = message;
+  };
+
+  const setBusy = (ui, isBusy) => {
+    ui.searchButton.disabled = isBusy;
+    ui.stopButton.disabled = !isBusy;
+    ui.searchButton.textContent = isBusy ? '조회 중...' : '조회';
+  };
+
+  const buildListUrl = ({ pageNo, toCenterCode, startDate, endDate }) => {
+    const url = new URL('/transfer/admin/operation/paging', location.origin);
+
+    url.searchParams.set('page', String(pageNo));
+    url.searchParams.set('skuBarcode', '');
+    url.searchParams.set('skuExternalId', '');
+    url.searchParams.set('skuId', '');
+    url.searchParams.set('vehicleNumber', '');
+    url.searchParams.set('status', STATUS_LOAD);
+    url.searchParams.set('containerBarcode', '');
+    url.searchParams.set('transferCartPriority', '');
+    url.searchParams.set('toCenterCode', toCenterCode);
+    url.searchParams.set('centerCode', '');
+    url.searchParams.set('transferAllocationType', '');
+    url.searchParams.set('transferPlanExternalId', '');
+    url.searchParams.set('cartBarcode', '');
+    url.searchParams.set('searchDateType', SEARCH_DATE_TYPE);
+    url.searchParams.set('end', endDate);
+    url.searchParams.set('start', startDate);
+
+    return url.href;
+  };
+
+  const fetchHtml = async (url, signal) => {
+    await sleep(REQUEST_GAP_MS, signal);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+      cache: 'no-store',
+      signal,
+      headers: {
+        Accept: 'text/html, */*'
+      }
+    });
+
+    const html = await response.text();
+
+    if (!response.ok) {
+      throw new Error(`WMS 조회에 실패했습니다. 잠시 후 다시 시도하세요. (${response.status})`);
+    }
+
+    if (html.includes('<input') && html.includes('password')) {
+      throw new Error('WMS 로그인이 필요합니다. 새로고침 또는 재로그인 후 다시 실행하세요.');
+    }
+
+    return html;
+  };
+
+  const tableToObjects = (table) => {
+    const headers = [...table.querySelectorAll('thead th')].map(th => clean(th.innerText || th.textContent));
+
+    return [...table.querySelectorAll('tbody tr')]
+      .map(tr => {
+        const cells = [...tr.querySelectorAll('td')];
+
+        if (cells.length === 1 && cells[0].hasAttribute('colspan')) return null;
+
+        const row = {};
+
+        headers.forEach((header, index) => {
+          row[header || `col_${index + 1}`] = clean(cells[index]?.innerText || cells[index]?.textContent);
+        });
+
+        return row;
+      })
+      .filter(Boolean);
+  };
+
+  const parseListRows = (html) => {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const tables = [...doc.querySelectorAll('table')];
+
+    const table = tables.find(tbl => {
+      const headers = [...tbl.querySelectorAll('thead th')].map(th => clean(th.innerText || th.textContent));
+      return headers.some(header => header.includes('보내는') && header.includes('센터')) &&
+        headers.some(header => header.replace(/\s/g, '').includes('차량번호'));
+    });
+
+    return table ? tableToObjects(table) : [];
+  };
+
+  const getValue = (row, candidates) => {
+    for (const key of candidates) {
+      if (Object.prototype.hasOwnProperty.call(row, key) && clean(row[key])) {
+        return clean(row[key]);
+      }
+    }
+
+    const entries = Object.entries(row);
+
+    for (const [key, value] of entries) {
+      const normalizedKey = key.replace(/\s/g, '');
+
+      if (candidates.some(candidate => normalizedKey === candidate.replace(/\s/g, '')) && clean(value)) {
+        return clean(value);
+      }
+    }
+
+    return '';
+  };
+
+  const extractVehicleNumber = (text) => {
+    const value = clean(text);
+    const match = value.match(/\d{4}/);
+    return match ? match[0] : '';
+  };
+
+  const makeRowKey = (row) => JSON.stringify(row);
+
+  const collectRows = async ({ ui, runId, toCenterCode, startDate, endDate, signal }) => {
+    const rows = [];
+    const seenPages = new Set();
+
+    for (let pageNo = 0; pageNo < MAX_PAGE; pageNo++) {
+      if (signal.aborted || window[RUN_KEY] !== runId) {
+        throw createAbortError();
+      }
+
+      setStatus(ui, `목록 조회 중 · page ${pageNo + 1}`);
+
+      const url = buildListUrl({ pageNo, toCenterCode, startDate, endDate });
+      console.log(`[${APP_TITLE}] page=${pageNo}`, url);
+
+      const html = await fetchHtml(url, signal);
+      const pageRows = parseListRows(html);
+
+      if (!pageRows.length) break;
+
+      const signature = pageRows.map(makeRowKey).join('|');
+
+      if (seenPages.has(signature)) break;
+      seenPages.add(signature);
+
+      rows.push(...pageRows);
+
+      if (pageRows.length < PAGE_SIZE) break;
+    }
+
+    return rows;
+  };
+
+  const groupRows = (rows) => {
+    const groups = new Map();
+
+    rows.forEach(row => {
+      const fromCenter = getValue(row, ['보내는 센터', '보낸 센터', '출발 센터', 'From 센터']);
+      const vehicleNumber = extractVehicleNumber(getValue(row, ['차량번호', '차량 번호', 'Vehicle Number']));
+
+      if (!fromCenter || !vehicleNumber) return;
+
+      if (!groups.has(fromCenter)) {
+        groups.set(fromCenter, new Set());
+      }
+
+      groups.get(fromCenter).add(vehicleNumber);
+    });
+
+    return [...groups.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([fromCenter, vehicleSet]) => ({
+        fromCenter,
+        vehicles: [...vehicleSet].sort((a, b) => a.localeCompare(b))
+      }));
+  };
+
+  const renderGroups = (ui, groups, sourceRowsLength) => {
+    const vehicleCount = groups.reduce((sum, group) => sum + group.vehicles.length, 0);
+
+    ui.copyGroupButton.disabled = !groups.length;
+    ui.copyExcelButton.disabled = !groups.length;
+
+    ui.summary.textContent = groups.length
+      ? `보내는센터 ${groups.length}개 / 차량 ${vehicleCount}대 / 목록 ${sourceRowsLength}건`
+      : '';
+
+    if (!groups.length) {
+      ui.result.innerHTML = '<div class="glv-empty">이동중 차량 정보가 없습니다.</div>';
+      return;
+    }
+
+    ui.result.innerHTML = groups.map(group => `
+      <div class="glv-group">
+        <div class="glv-group-head">
+          <span>${escapeHtml(group.fromCenter)}</span>
+          <span class="glv-count">${group.vehicles.length}대</span>
+        </div>
+        <div class="glv-vehicles">
+          ${group.vehicles.map(vehicle => `<span class="glv-vehicle">${escapeHtml(vehicle)}</span>`).join('')}
+        </div>
+      </div>
+    `).join('');
+  };
+
+  const buildGroupText = (groups) =>
+    groups
+      .map(group => `${group.fromCenter}\n${group.vehicles.join(' ')}`)
+      .join('\n\n');
+
+  const buildExcelText = (groups) => [
+    '보내는센터\t차량번호',
+    ...groups.flatMap(group => group.vehicles.map(vehicle => `${group.fromCenter}\t${vehicle}`))
+  ].join('\n');
+
+  const copyText = async (text) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+  };
+
+  const getFriendlyErrorMessage = (error) => {
+    if (isAbortError(error)) {
+      return '조회가 중지되었습니다.';
+    }
+
+    const message = error?.message || String(error);
+
+    if (message.includes('Failed to fetch') || message.includes('NetworkError')) {
+      return 'WMS 또는 네트워크 연결을 확인하세요.';
+    }
+
+    return message;
+  };
+
+  const ui = createPanel();
+  let latestGroups = [];
+
+  ui.closeButton.addEventListener('click', removeExistingPanel);
+
+  ui.stopButton.addEventListener('click', () => {
+    window[RUN_KEY] = '';
+    window[ABORT_KEY]?.abort();
+    setStatus(ui, '조회가 중지되었습니다.');
+    setBusy(ui, false);
+  });
+
+  ui.copyGroupButton.addEventListener('click', async () => {
+    await copyText(buildGroupText(latestGroups));
+    setStatus(ui, '그룹 형식으로 복사했습니다.');
+  });
+
+  ui.copyExcelButton.addEventListener('click', async () => {
+    await copyText(buildExcelText(latestGroups));
+    setStatus(ui, '엑셀용 형식으로 복사했습니다.');
+  });
+
+  ui.searchButton.addEventListener('click', async () => {
+    const toCenterCode = clean(ui.toCenterInput.value).toUpperCase();
+    const rangeDays = Number(ui.rangeSelect.value || DEFAULT_RANGE_DAYS);
+
+    if (!toCenterCode) {
+      setStatus(ui, '받는센터를 입력하세요.');
+      ui.toCenterInput.focus();
+      return;
+    }
+
+    const runId = `${Date.now()}-${Math.random()}`;
+    const abortController = new AbortController();
+
+    window[ABORT_KEY]?.abort();
+    window[RUN_KEY] = runId;
+    window[ABORT_KEY] = abortController;
+
+    latestGroups = [];
+    ui.summary.textContent = '';
+    ui.result.innerHTML = '';
+    ui.copyGroupButton.disabled = true;
+    ui.copyExcelButton.disabled = true;
+    setBusy(ui, true);
+
+    try {
+      const { startDate, endDate } = getDateRange(rangeDays);
+
+      setStatus(ui, `이동중 목록 조회 중 · ${toCenterCode} · ${startDate} ~ ${endDate}`);
+
+      const rows = await collectRows({
+        ui,
+        runId,
+        toCenterCode,
+        startDate,
+        endDate,
+        signal: abortController.signal
+      });
+      latestGroups = groupRows(rows);
+
+      window.grabLoadVehicleVersion = APP_VERSION;
+      window.grabLoadVehicleRows = rows;
+      window.grabLoadVehicleGroups = latestGroups;
+
+      renderGroups(ui, latestGroups, rows.length);
+      setStatus(ui, latestGroups.length ? '조회 완료' : '조회 완료 · 표시할 차량 정보가 없습니다.');
+    } catch (error) {
+      if (!isAbortError(error)) {
+        console.error(`[${APP_TITLE}]`, error);
+      }
+      setStatus(ui, getFriendlyErrorMessage(error));
+    } finally {
+      if (window[RUN_KEY] === runId) {
+        window[ABORT_KEY] = null;
+        setBusy(ui, false);
+      }
+    }
+  });
+})();
